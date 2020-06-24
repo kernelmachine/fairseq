@@ -4,7 +4,7 @@ This page includes instructions for reproducing results from the paper [Mixture 
 
 ## Download data
 
-First, follow the [instructions to download and preprocess the WMT'17 En-De dataset](../translation#prepare-wmt14en2desh).
+First, follow the [instructions to download and preprocess the Wikitext 103](../language_model#prepare-wikitext-103).
 Make sure to learn a joint vocabulary by passing the `--joined-dictionary` option to `fairseq-preprocess`.
 
 ## Train a model
