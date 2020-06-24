@@ -1,6 +1,4 @@
-# Mixture Models for Diverse Machine Translation: Tricks of the Trade (Shen et al., 2019)
-
-This page includes instructions for reproducing results from the paper [Mixture Models for Diverse Machine Translation: Tricks of the Trade (Shen et al., 2019)](https://arxiv.org/abs/1902.07816).
+# Mixture Models for Langage Modeling
 
 ## Download data
 
