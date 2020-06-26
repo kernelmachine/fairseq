@@ -25,23 +25,16 @@ class MeanPoolGatingNetwork(torch.nn.Module):
         self.fc2 = torch.nn.Linear(embed_dim, num_experts)
 
     def forward(self, encoder_out):
-        if not (
-            hasattr(encoder_out, 'encoder_out')
-            and hasattr(encoder_out, 'encoder_padding_mask')
-            and encoder_out.encoder_out.size(2) == self.embed_dim
-        ):
-            raise ValueError('Unexpected format for encoder_out')
-
         # mean pooling over time
-        encoder_padding_mask = encoder_out.encoder_padding_mask  # B x T
-        encoder_out = encoder_out.encoder_out.transpose(0, 1)    # B x T x C
-        if encoder_padding_mask is not None:
-            encoder_out = encoder_out.clone()  # required because of transpose above
-            encoder_out[encoder_padding_mask] = 0
-            ntokens = torch.sum(~encoder_padding_mask, dim=1, keepdim=True)
-            x = torch.sum(encoder_out, dim=1) / ntokens.type_as(encoder_out)
-        else:
-            x = torch.mean(encoder_out, dim=1)
+        # encoder_padding_mask = encoder_out.encoder_padding_mask  # B x T
+        # encoder_out = encoder_out.encoder_out.transpose(0, 1)    # B x T x C
+        # if encoder_padding_mask is not None:
+        #     encoder_out = encoder_out.clone()  # required because of transpose above
+        #     encoder_out[encoder_padding_mask] = 0
+        #     ntokens = torch.sum(~encoder_padding_mask, dim=1, keepdim=True)
+        #     x = torch.sum(encoder_out, dim=1) / ntokens.type_as(encoder_out)
+        # else:
+        x = torch.mean(encoder_out[0], dim=1)
 
         x = torch.tanh(self.fc1(x))
         if self.dropout is not None:

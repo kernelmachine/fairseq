@@ -11,11 +11,8 @@ from fairseq.tasks.language_modeling import LanguageModelingTask
 from .logsumexp_moe import LogSumExpMoE
 from .mean_pool_gating_network import MeanPoolGatingNetwork
 import torch.multiprocessing as mp
-try:
-    mp.set_start_method('spawn')
-except RuntimeError:
-    pass
-
+torch.multiprocessing.set_start_method('spawn', force="True")
+done = mp.Event()
 @register_task('language_model_moe')
 class LanguageModelMoETask(LanguageModelingTask):
     """
@@ -54,7 +51,7 @@ class LanguageModelMoETask(LanguageModelingTask):
                             help='use a simple mean-pooling gating network')
         parser.add_argument('--mean-pool-gating-network-dropout', type=float,
                             help='dropout for mean-pooling gating network')
-        parser.add_argument('--mean-pool-gating-network-encoder-dim', type=float,
+        parser.add_argument('--mean-pool-gating-network-encoder-dim', type=int,
                             help='encoder output dim for mean-pooling gating network')
         parser.add_argument('--gen-expert', type=int, default=0,
                             help='which expert to use for generation')
@@ -89,7 +86,7 @@ class LanguageModelMoETask(LanguageModelingTask):
     def build_model(self, args):
         from fairseq import models
         model = models.build_model(args, self)
-        if not self.uniform_prior and not hasattr(model, 'gating_network'):
+        if not hasattr(model, 'gating_network'):
             if self.args.mean_pool_gating_network:
                 if getattr(args, 'mean_pool_gating_network_encoder_dim', None):
                     encoder_dim = args.mean_pool_gating_network_encoder_dim
@@ -119,83 +116,45 @@ class LanguageModelMoETask(LanguageModelingTask):
     def expert_index(self, i):
         return i + self.output_dictionary.index('<expert_0>')
 
-
-    def get_lprob_y(self, model, sample, src_tokens, src_lengths, criterion):
-        net_output = model(
-            src_tokens=src_tokens,
-            src_lengths=src_lengths
-        )
-        loss, _ = criterion.compute_loss(model, net_output, sample, reduce=False)
-        loss = loss.view(sample['target'].size(0), -1)
-        return -loss.sum(dim=1, keepdim=True)  # -> B x 1
-
-    def expert_forward(self,  model, sample, i, criterion):
-        src_tokens = sample['net_input']['src_tokens'].clone()
-        assert not src_tokens.requires_grad
-        src_tokens[:, 0] = self.expert_index(i)
-        res = self.get_lprob_y(model, sample, src_tokens, sample['net_input']['src_lengths'], criterion)
-        return res
-        # print(res)
-        # q.put(res)
-
-    def get_lprob_yz(self, model, sample, criterion, winners=None):
-        if winners is None:
-            model.share_memory()
-            processes = []
-            # q = mp.Queue()
-            # for rank in range(self.args.num_experts):
-            #     p = mp.Process(target=self.expert_forward, args=(q, model, sample, rank, criterion))
-            #     p.start()
-            #     processes.append(p)
-            # for process in processes:
-            #     process.join()
-            lprob_y = [self.expert_forward(model, sample, i, criterion) for i in range(self.args.num_experts)]
-            lprob_y = torch.cat(lprob_y, dim=1)  # -> B x K
-        else:
-            src_tokens = sample['net_input']['src_tokens'].clone()
-            src_tokens[:, 0] = self.expert_index(winners)
-            lprob_y = self.get_lprob_y(model, sample, src_tokens, sample['net_input']['src_lengths'], criterion)  # -> B
-        if self.uniform_prior:
-            lprob_yz = lprob_y
-        else:
-            lprob_z = model.gating_network(src_tokens)  # B x K
-            if winners is not None:
-                lprob_z = lprob_z.gather(dim=1, index=winners.unsqueeze(-1))
-            lprob_yz = lprob_y + lprob_z.type_as(lprob_y)  # B x K
-
-        return lprob_yz
-
     def _get_loss(self, sample, model, criterion):
         assert hasattr(criterion, 'compute_loss'), \
             'language_model_moe task requires the criterion to implement the compute_loss() method'
 
-        k = self.args.num_experts
         bsz = sample['target'].size(0)
-        src_lengths = sample['net_input']['src_lengths']
+        src_tokens = sample['net_input']['src_tokens'].clone()
+        src_lengths = sample['net_input']['src_tokens']
 
-        # compute responsibilities without dropout
+        #### E-STEP
         with utils.eval(model):  # disable dropout
             with torch.no_grad():  # disable autograd
-                lprob_yz = self.get_lprob_yz(model, sample, criterion)  # B x K
-                prob_z_xy = torch.nn.functional.softmax(lprob_yz, dim=1)
-        assert not prob_z_xy.requires_grad
+                net_output = model(
+                    src_tokens=src_tokens,
+                    src_lengths=src_lengths
+                )
 
-        # compute loss with dropout
-        if self.hard_selection:
-            winners = prob_z_xy.max(dim=1)[1]
-            loss = -self.get_lprob_yz(model, sample,criterion,  winners)
-        else:
-            lprob_yz = self.get_lprob_yz(model, sample, criterion)  # B x K
-            loss = -LogSumExpMoE.apply(lprob_yz, prob_z_xy, 1)
-
+        # pass net output to gating network to compute expert probabilities
+        expert_probs = model.gating_network(net_output)  
+        # hard selection of experts
+        expert_assignments = [self.expert_index(x) for x in expert_probs.argmax(dim=1)]
+        # add expert assignments as BOS tokens
+        src_tokens[:, 0] = torch.Tensor(expert_assignments).long()
+        
+        #### M-STEP
+        net_output = model(
+                src_tokens=src_tokens,
+                src_lengths=src_lengths
+        )
+        loss, _ = criterion.compute_loss(model, net_output, sample, reduce=False)
+        loss = loss.view(sample['target'].size(0), -1)
+        loss = loss.sum(dim=1, keepdim=True)
+    
         loss = loss.sum()
         sample_size = sample['target'].size(0) if self.args.sentence_avg else sample['ntokens']
         logging_output = {
             'loss': utils.item(loss.data),
             'ntokens': sample['ntokens'],
             'nsentences': bsz,
-            'sample_size': sample_size,
-            'posterior': prob_z_xy.float().sum(dim=0).cpu(),
+            'sample_size': sample_size
         }
         return loss, sample_size, logging_output
 
