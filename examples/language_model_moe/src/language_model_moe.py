@@ -121,7 +121,7 @@ class LanguageModelMoETask(LanguageModelingTask):
             'language_model_moe task requires the criterion to implement the compute_loss() method'
 
         bsz = sample['target'].size(0)
-        src_tokens = sample['net_input']['src_tokens'].clone()
+        src_tokens = sample['net_input']['src_tokens']
         src_lengths = sample['net_input']['src_tokens']
 
         #### E-STEP
@@ -131,12 +131,12 @@ class LanguageModelMoETask(LanguageModelingTask):
                     src_tokens=src_tokens,
                     src_lengths=src_lengths
                 )
-
         # pass net output to gating network to compute expert probabilities
         expert_probs = model.gating_network(net_output)  
         # hard selection of experts
         expert_assignments = [self.expert_index(x) for x in expert_probs.argmax(dim=1)]
         # add expert assignments as BOS tokens
+
         src_tokens[:, 0] = torch.Tensor(expert_assignments).long()
         
         #### M-STEP
