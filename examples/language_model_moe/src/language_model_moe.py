@@ -136,7 +136,6 @@ class LanguageModelMoETask(LanguageModelingTask):
         # hard selection of experts
         expert_assignments = [self.expert_index(x) for x in expert_probs.argmax(dim=1)]
         # add expert assignments as BOS tokens
-
         src_tokens[:, 0] = torch.Tensor(expert_assignments).long()
         
         #### M-STEP
