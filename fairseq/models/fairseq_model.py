@@ -475,6 +475,66 @@ class FairseqLanguageModel(BaseFairseqModel):
         return {"future"}
 
 
+class FairseqMultiDecoderLanguageModel(BaseFairseqModel):
+    """Base class for decoder-only models.
+
+    Args:
+        decoder (FairseqDecoder): the decoder
+    """
+
+    def __init__(self, num_decoders, decoder):
+        super().__init__()
+        self.decoders = {i: decoder for i in range(num_decoders)}
+        assert all(isinstance(x, FairseqDecoder) for x, y in self.decoders.items())
+
+    def forward(self, src_tokens, index, **kwargs):
+        """
+        Run the forward pass for a decoder-only model.
+
+        Feeds a batch of tokens through the decoder to predict the next tokens.
+
+        Args:
+            src_tokens (LongTensor): tokens on which to condition the decoder,
+                of shape `(batch, tgt_len)`
+            src_lengths (LongTensor): source sentence lengths of shape `(batch)`
+
+        Returns:
+            tuple:
+                - the decoder's output of shape `(batch, seq_len, vocab)`
+                - a dictionary with any model-specific outputs
+        """
+        return self.decoders[index](src_tokens, **kwargs)
+
+    def forward_decoder(self, prev_output_tokens, index, **kwargs):
+        return self.decoders[index](prev_output_tokens, **kwargs)
+
+    def extract_features(self, src_tokens, index, **kwargs):
+        """
+        Similar to *forward* but only return features.
+
+        Returns:
+            tuple:
+                - the decoder's features of shape `(batch, seq_len, embed_dim)`
+                - a dictionary with any model-specific outputs
+        """
+        return self.decoders[index].extract_features(src_tokens, **kwargs)
+
+    def output_layer(self, features, index, **kwargs):
+        """Project features to the default output size (typically vocabulary size)."""
+        return self.decoders[index].output_layer(features, **kwargs)
+
+    def max_positions(self, index):
+        """Maximum length supported by the model."""
+        return self.decoders[index].max_positions()
+
+    def max_decoder_positions(self, index):
+        """Maximum length supported by the decoder."""
+        return self.decoders[index].max_positions()
+
+    @property
+    def supported_targets(self):
+        return {"future"}
+
 class FairseqEncoderModel(BaseFairseqModel):
     """Base class for encoder-only models.
 

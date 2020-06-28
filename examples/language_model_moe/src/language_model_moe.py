@@ -13,7 +13,7 @@ from .mean_pool_gating_network import MeanPoolGatingNetwork
 import torch.multiprocessing as mp
 torch.multiprocessing.set_start_method('spawn', force="True")
 done = mp.Event()
-@register_task('language_model_moe')
+@register_task('language_modeling_moe')
 class LanguageModelMoETask(LanguageModelingTask):
     """
     Language Modeling task for Mixture of Experts (MoE) models.
@@ -122,7 +122,7 @@ class LanguageModelMoETask(LanguageModelingTask):
 
         bsz = sample['target'].size(0)
         src_tokens = sample['net_input']['src_tokens']
-        src_lengths = sample['net_input']['src_tokens']
+        src_lengths = sample['net_input']['src_lengths']
 
         #### E-STEP
         with utils.eval(model):  # disable dropout
@@ -153,7 +153,8 @@ class LanguageModelMoETask(LanguageModelingTask):
             'loss': utils.item(loss.data),
             'ntokens': sample['ntokens'],
             'nsentences': bsz,
-            'sample_size': sample_size
+            'sample_size': sample_size,
+            "expert_assignments": expert_probs.argmax(dim=1)
         }
         return loss, sample_size, logging_output
 
@@ -173,12 +174,19 @@ class LanguageModelMoETask(LanguageModelingTask):
 
     def inference_step(self, generator, models, sample, prefix_tokens=None, expert=None):
         expert = expert or self.args.gen_expert
+
         with torch.no_grad():
+            # SequenceGenerator doesn't use src_tokens directly, we need to
+            # pass the `prefix_tokens` argument instead
+            if prefix_tokens is None and sample["net_input"]["src_tokens"].nelement():
+                prefix_tokens = sample["net_input"]["src_tokens"]
+                prefix_tokens[:,0] = self.expert_index(expert)
+                prefix_tokens = prefix_tokens[:, 1:]
             return generator.generate(
                 models,
                 sample,
                 prefix_tokens=prefix_tokens,
-                bos_token=self.expert_index(expert),
+                bos_token = self.expert_index(expert)
             )
 
     def reduce_metrics(self, logging_outputs, criterion):

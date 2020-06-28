@@ -40,7 +40,6 @@ logger = logging.getLogger("fairseq_cli.train")
 
 def main(args, init_distributed=False):
     utils.import_user_module(args)
-
     assert (
         args.max_tokens is not None or args.max_sentences is not None
     ), "Must specify batch size either with --max-tokens or --max-sentences"
@@ -337,6 +336,7 @@ def distributed_main(i, args, start_rank=0):
 
 
 def cli_main(modify_parser=None):
+    import ipdb; ipdb.set_trace()
     parser = options.get_training_parser()
     args = options.parse_args_and_arch(parser, modify_parser=modify_parser)
     if args.profile:
